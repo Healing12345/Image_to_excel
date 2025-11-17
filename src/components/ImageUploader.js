@@ -1,9 +1,16 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 
 export default function ImageUploader({ onUpload }) {
   const [files, setFiles] = useState([]);
   const [progress, setProgress] = useState({}); // { fileKey: percent }
+
+  // Clean up preview URLs on unmount
+  useEffect(() => {
+    return () => {
+      files.forEach((file) => URL.revokeObjectURL(file.preview));
+    };
+  }, [files]);
 
   const handleDrop = (acceptedFiles, rejectedFiles) => {
     if (rejectedFiles.length > 0) {
@@ -11,34 +18,37 @@ export default function ImageUploader({ onUpload }) {
     }
 
     // Add preview URLs
-    const filesWithPreview = acceptedFiles.map((file) =>
-      Object.assign(file, { preview: URL.createObjectURL(file) })
+    const withPreview = acceptedFiles.map((file) => {
+      const previewURL = URL.createObjectURL(file);
+      return Object.assign(file, { preview: previewURL });
+    });
+
+    // Merge existing + new
+    const merged = [...files, ...withPreview];
+
+    // Remove duplicates (name + size)
+    const unique = Array.from(
+      new Map(merged.map((f) => [`${f.name}-${f.size}`, f])).values()
     );
 
-    const mergedFiles = [...files, ...filesWithPreview];
+    setFiles(unique);
+    onUpload(unique);
 
-    // Remove duplicates based on name + size
-    const uniqueFiles = Array.from(
-      new Map(mergedFiles.map((f) => [`${f.name}-${f.size}`, f])).values()
-    );
-
-    setFiles(uniqueFiles);
-    onUpload(uniqueFiles);
-
-    // Simulate upload progress
-    simulateProgress(uniqueFiles);
+    // Start progress only for newly added files
+    simulateProgress(unique, withPreview);
   };
 
-  const simulateProgress = (files) => {
-    files.forEach((file) => {
+  const simulateProgress = (allFiles, newFiles) => {
+    newFiles.forEach((file) => {
       const key = file.name + "-" + file.size;
 
-      // Skip if already uploaded or finished
+      // If progress already exists (file was uploaded before), skip
       if (progress[key] >= 100) return;
 
       let percent = 0;
       const timer = setInterval(() => {
-        percent += Math.random() * 15 + 5; // +5 to +20 per step
+        percent += Math.random() * 15 + 5; // +5 to +20 per tick
+
         if (percent >= 100) {
           percent = 100;
           clearInterval(timer);
@@ -50,9 +60,12 @@ export default function ImageUploader({ onUpload }) {
   };
 
   const removeFile = (fileToRemove) => {
+    URL.revokeObjectURL(fileToRemove.preview);
+
     const updated = files.filter(
-      (f) => f.name !== fileToRemove.name || f.size !== fileToRemove.size
+      (f) => !(f.name === fileToRemove.name && f.size === fileToRemove.size)
     );
+
     setFiles(updated);
     onUpload(updated);
   };
@@ -61,13 +74,13 @@ export default function ImageUploader({ onUpload }) {
     useDropzone({
       accept: { "image/*": [] },
       multiple: true,
-      maxSize: 8 * 1024 * 1024,
+      maxSize: 8 * 1024 * 1024, // 8MB
       onDrop: handleDrop,
     });
 
   return (
     <div>
-      {/* Drop Zone */}
+      {/* DROPZONE */}
       <div
         {...getRootProps()}
         style={{
@@ -77,10 +90,11 @@ export default function ImageUploader({ onUpload }) {
           textAlign: "center",
           cursor: "pointer",
           background: isDragActive ? "#eef8ff" : "#fafafa",
-          transition: "0.2s ease",
+          transition: ".2s ease",
         }}
       >
         <input {...getInputProps()} />
+
         {isDragReject ? (
           <p style={{ color: "red" }}>Only images are allowed.</p>
         ) : isDragActive ? (
@@ -90,7 +104,7 @@ export default function ImageUploader({ onUpload }) {
         )}
       </div>
 
-      {/* Preview List */}
+      {/* PREVIEW LIST */}
       {files.length > 0 && (
         <div style={{ marginTop: "20px" }}>
           <strong>Images:</strong>
@@ -104,6 +118,7 @@ export default function ImageUploader({ onUpload }) {
           >
             {files.map((file) => {
               const key = file.name + "-" + file.size;
+
               return (
                 <div
                   key={key}
@@ -117,31 +132,30 @@ export default function ImageUploader({ onUpload }) {
                     position: "relative",
                   }}
                 >
-                  {/* Remove button */}
+                  {/* REMOVE BUTTON */}
                   <button
-                     onClick={() => removeFile(file)}
-                     style={{
-                        position: "absolute",
-                        top: "-8px",
-                        right: "-8px",
-                        background: "#ff4d4f",
-                        color: "white",
-                        border: "none",
-                        borderRadius: "50%",
-                        width: "24px",
-                        height: "24px",
-                        cursor: "pointer",
-                        fontSize: "14px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        boxShadow: "0 2px 6px rgba(0,0,0,0.25)",
-                     }}
-                    >
-                     ✕
+                    onClick={() => removeFile(file)}
+                    style={{
+                      position: "absolute",
+                      top: "-8px",
+                      right: "-8px",
+                      background: "#ff4d4f",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "50%",
+                      width: "24px",
+                      height: "24px",
+                      cursor: "pointer",
+                      fontSize: "14px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      boxShadow: "0 2px 6px rgba(0,0,0,0.25)",
+                    }}
+                  >
+                    ✕
                   </button>
 
-                  {/* Image preview */}
                   <img
                     src={file.preview}
                     alt="preview"
@@ -153,7 +167,6 @@ export default function ImageUploader({ onUpload }) {
                     }}
                   />
 
-                  {/* Filename */}
                   <div
                     style={{
                       fontSize: "12px",
@@ -164,7 +177,7 @@ export default function ImageUploader({ onUpload }) {
                     {file.name}
                   </div>
 
-                  {/* Upload Progress */}
+                  {/* PROGRESS BAR */}
                   <div
                     style={{
                       marginTop: "6px",
@@ -183,6 +196,7 @@ export default function ImageUploader({ onUpload }) {
                       }}
                     ></div>
                   </div>
+
                   <div style={{ fontSize: "10px", marginTop: "4px" }}>
                     {progress[key] ? Math.round(progress[key]) : 0}%
                   </div>
