@@ -72,9 +72,14 @@ export default function SupplierExcelUploader({ onSupplierUpload }) {
         { data: excelData }
       );
 
-      alert(
-        `Upload successful!\nAdded: ${response.data.added_rows}, Updated: ${response.data.updated_rows}`
-      );
+      // Trigger download
+const downloadUrl = response.data.download_url;
+const link = document.createElement("a");
+link.href = downloadUrl;
+link.download = downloadUrl.split("/").pop(); // filename
+document.body.appendChild(link);
+link.click();
+link.remove();
 
       onSupplierUpload?.(excelData);
 

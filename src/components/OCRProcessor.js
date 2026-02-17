@@ -8,6 +8,7 @@ import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import ModalForm from "./ModalForm.jsx";
 import SupplierExcelUploader from "./SupplierExcelUploader.jsx";
+import "./SearchResults.css";
 
 // CLEAN TEXT
 const cleanText = (text) => {
@@ -50,10 +51,22 @@ const extractReferenceNumber = (text) => {
   return "";
 };
 
+function getRandomNumber() {
+  // Random integer from 1 to 5
+  const num = Math.floor(Math.random() * 5) + 1;
+
+  // Format as 3-digit number starting with 00
+  return num.toString().padStart(3, "0");
+}
+
+
 // FIELD extraction
 const extractFields = (text) => {
   const Type = extractNoteType(text);
-  const reference_number = extractReferenceNumber(text);
+  let reference_number = extractReferenceNumber(text);
+  if(!reference_number){
+      reference_number = getRandomNumber();
+  }
   const Supplier_Name = "";
   const PO_Number = "";
   const Ref_1 = "";
@@ -198,7 +211,7 @@ export default function OCRProcessor() {
     setModalTitle("Update Excel Row");
     setModalFields({
       Date: item.data.Date || "",
-      docket_number: item.data.docket_number || "",
+      reference_number: item.data.reference_number || "",
       Supplier_Name: item.data.Supplier_Name || "",
       PO_Number: item.data.PO_Number || "",
       Ref_1: item.data.Ref_1 || "",
@@ -238,6 +251,12 @@ export default function OCRProcessor() {
     }
   };
 
+  // Clear Search
+  const handleClearSearch = () => {
+    setSearchQuery("");
+    setSearchResult(null);
+  };
+
   return (
     <div style={{ padding: "20px" }}>
 
@@ -267,6 +286,12 @@ export default function OCRProcessor() {
         >
           Search
         </button>
+        <button
+          onClick={handleClearSearch}
+          style={{ padding: "10px 20px", background: "#9e9e9e", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", marginLeft: "10px"}}
+        >
+          Clear
+        </button>
       </div>
 
       {searchResult && (
@@ -274,7 +299,8 @@ export default function OCRProcessor() {
           <h4>Search Results:</h4>
           <p><strong>Found:</strong> {searchResult.count}</p>
           {searchResult.count > 0 && (
-            <table style={{ width: "100%", borderCollapse: "collapse", background: "#fafafa", borderRadius: "8px", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto", width: "100%" }}>
+            <table className="responsive-table" style={{ width: "100%", minWidth: "1100px", borderCollapse: "collapse", background: "#fafafa", borderRadius: "8px", overflow: "hidden" }}>
               <thead style={{ background: "#1976d2", color: "white" }}>
                 <tr>
                   <th style={{ padding: "10px", border: "1px solid #ddd" }}>Date</th>
@@ -283,6 +309,8 @@ export default function OCRProcessor() {
                   <th style={{ padding: "10px", border: "1px solid #ddd" }}>PO Number</th>
                   <th style={{ padding: "10px", border: "1px solid #ddd" }}>Ref 1</th>
                   <th style={{ padding: "10px", border: "1px solid #ddd" }}>Ref 2</th>
+                  <th style={{ padding: "10px", border: "1px solid #ddd" }}>Ref 3</th>
+                  <th style={{ padding: "10px", border: "1px solid #ddd" }}>Ref 4</th>
                   <th style={{ padding: "10px", border: "1px solid #ddd" }}>Qnty</th>
                   <th style={{ padding: "10px", border: "1px solid #ddd" }}>File</th>
                   <th style={{ padding: "10px", border: "1px solid #ddd" }}>Actions</th>
@@ -291,16 +319,47 @@ export default function OCRProcessor() {
               <tbody>
                 {searchResult.results.map((item, idx) => {
                   const row = item.data;
+                  
                   return (
                     <tr key={idx}>
-                      <td style={{ padding: "10px", border: "1px solid #ddd" }}>{row.Date || "-"}</td>
-                      <td style={{ padding: "10px", border: "1px solid #ddd" }}>{row.reference_number || "-"}</td>
-                      <td style={{ padding: "10px", border: "1px solid #ddd" }}>{row.Supplier_Name || "-"}</td>
-                      <td style={{ padding: "10px", border: "1px solid #ddd" }}>{row.PO_Number || "-"}</td>
-                      <td style={{ padding: "10px", border: "1px solid #ddd" }}>{row.Ref_1 || "-"}</td>
-                      <td style={{ padding: "10px", border: "1px solid #ddd" }}>{row.Ref_2 || "-"}</td>
-                      <td style={{ padding: "10px", border: "1px solid #ddd" }}>{row.quantity || "-"}</td>
-                      <td style={{ padding: "10px", border: "1px solid #ddd" }}>
+                      <td data-label="Date" style={{ padding: "10px", border: "1px solid #ddd" }}>{row.Date || "-"}</td>
+                      <td data-label="Docket">
+                         <button
+                            onClick={async () => {
+                            try {
+                              // 1️⃣ Check
+                              await axios.get(
+                                 `http://localhost:5000/check-file/${encodeURIComponent(row.filename)}`
+                              );
+
+                              // 2️⃣ Open only if it exists
+                              window.open(
+                                `http://localhost:5000/open-file/${encodeURIComponent(row.filename)}`,
+                                "_blank"
+                              );
+                            } catch (error) {
+                                alert("File not found");
+                            }
+                         }}
+                         style={{
+                            background: "none",
+                            border: "none",
+                            color: "#1976d2",
+                            cursor: "pointer",
+                            textDecoration: "underline",
+                         }}
+                         >
+                         {row.reference_number}
+                         </button>
+                      </td>
+                      <td data-label="Supplier" style={{ padding: "10px", border: "1px solid #ddd" }}>{row.Supplier_Name || "-"}</td>
+                      <td data-label="PO Number" style={{ padding: "10px", border: "1px solid #ddd" }}>{row.PO_Number || "-"}</td>
+                      <td data-label="Ref 1" style={{ padding: "10px", border: "1px solid #ddd" }}>{row.Ref_1 || "-"}</td>
+                      <td data-label="Ref 2" style={{ padding: "10px", border: "1px solid #ddd" }}>{row.Ref_2 || "-"}</td>
+                      <td data-label="Ref 3" style={{ padding: "10px", border: "1px solid #ddd" }}>{row.Ref_3 || "-"}</td>
+                      <td data-label="Ref 4" style={{ padding: "10px", border: "1px solid #ddd" }}>{row.Ref_4 || "-"}</td>
+                      <td data-label="Qty" style={{ padding: "10px", border: "1px solid #ddd" }}>{row.quantity || "-"}</td>
+                      <td data-label="File" style={{ padding: "10px", border: "1px solid #ddd" }}>
                         <a href={item.file_url} target="_blank" rel="noreferrer">{item.file}</a>
                       </td>
                       <td style={{ padding: "10px", border: "1px solid #ddd" }}>
@@ -313,6 +372,7 @@ export default function OCRProcessor() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}

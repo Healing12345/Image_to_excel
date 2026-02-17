@@ -6,6 +6,7 @@ import path from "path";
 import cors from "cors";
 import { fileURLToPath } from "url";
 import multer from "multer";
+import os from "os";
 import { Console } from "console";
 
 // Fix __dirname for ES Modules
@@ -103,6 +104,8 @@ app.post("/find-matching-references", (req, res) => {
     const updatedExcel = uploadedData.map(row => {
       const uploadedDock = normalize(row.original_docket_number);
       const uploadedQty = Math.abs(Number(row.Quantity));
+      const reference = normalize(row["Reference"]);
+      const otherRef = normalize(row["Other Ref"]);
     
       let matchedQty = 0;
       let unmatchedQty = uploadedQty;
@@ -122,7 +125,7 @@ app.post("/find-matching-references", (req, res) => {
           } else {
             matchedQty = uploadedQty;
             unmatchedQty = 0;
-            qra = Math.abs(uploadedQty - savedQty);;
+            qra = Math.abs(uploadedQty - savedQty);
             status = "QRA";
           }
           break;
@@ -342,13 +345,16 @@ app.post("/delete-excel-row", (req, res) => {
 //PDF UPLOAD
 // Folder to save uploaded PDFs
 const PDF_UPLOAD_DIR = path.join(__dirname, "uploads");
+const IMAGE_UPLOAD_DIR = path.join(__dirname, "Images");
 
-if (!fs.existsSync(PDF_UPLOAD_DIR)) {
-  fs.mkdirSync(PDF_UPLOAD_DIR, { recursive: true });
-  console.log("Created uploads folder:", PDF_UPLOAD_DIR);
-}
+[PDF_UPLOAD_DIR, IMAGE_UPLOAD_DIR].forEach((dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log("Created folder:", dir);
+  }
+});
 
-// Multer storage
+// Multer storage    (PDF)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, PDF_UPLOAD_DIR),
   filename: (req, file, cb) => {
@@ -357,7 +363,15 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({ storage });   //PDF
+
+// Multer storage    (IMAGES)
+const imageStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, IMAGE_UPLOAD_DIR),
+  filename: (req, file, cb) => cb(null, file.originalname),
+});
+
+const uploadImage = multer({ storage: imageStorage });  //IMAGES
 
 // Upload PDFs
 app.post("/upload-pdf", upload.array("pdfs"), (req, res) => {
@@ -374,8 +388,21 @@ app.post("/upload-pdf", upload.array("pdfs"), (req, res) => {
   res.json({ message: "PDFs uploaded successfully", files });
 });
 
+// Upload IMAGEs
+app.post("/upload-image", uploadImage.single("image"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No image uploaded" });
+  
+  res.json({
+    originalName: req.file.originalname,
+    savedName: req.file.filename,
+    url: `http://localhost:5000/images/${req.file.filename}`,
+  });
+});
+
 // Serve uploaded PDFs
 app.use("/uploads", express.static(PDF_UPLOAD_DIR));
+// Serve uploaded IMAGEs
+app.use("/Images", express.static(IMAGE_UPLOAD_DIR));
 
 /* ============================================================
    UPLOAD SUPPLIER EXCEL → UPDATE SAVED OCR FILES
@@ -383,6 +410,7 @@ app.use("/uploads", express.static(PDF_UPLOAD_DIR));
 
 // Folder where Supplier Excel files will be saved
 const SUPPLIER_DIR = path.join(__dirname, "supplier_excels");
+app.use("/supplier_excels", express.static(SUPPLIER_DIR));
 
 // Ensure supplier folder exists
 if (!fs.existsSync(SUPPLIER_DIR)) {
@@ -392,8 +420,8 @@ if (!fs.existsSync(SUPPLIER_DIR)) {
 
 app.post("/upload-supplier-excel", (req, res) => {
   try {
-    const supplierFilePath = req.body.filePath; // optional: if sending a file path
-    const supplierData = req.body.data;         // or JSON data array
+    const supplierFilePath = req.body.filePath;
+    const supplierData = req.body.data;
 
     if (!Array.isArray(supplierData) && !supplierFilePath) {
       return res.status(400).json({ error: "No supplier data provided" });
@@ -401,16 +429,15 @@ app.post("/upload-supplier-excel", (req, res) => {
 
     let jsonData = [];
 
-    // --- 1️⃣ If supplierData is not JSON, read Excel from path ---
+    // ---------- 1️⃣ Read supplier Excel or JSON ----------
     if (supplierFilePath) {
       const workbook = XLSX.readFile(supplierFilePath);
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
 
-      const headerRowNumber = 6; // Row 6 as header
+      const headerRowNumber = 6;
       const range = XLSX.utils.decode_range(sheet["!ref"]);
 
-      // Get headers from row 6
       const headers = [];
       for (let C = range.s.c; C <= range.e.c; ++C) {
         const cellAddress = XLSX.utils.encode_cell({ r: headerRowNumber - 1, c: C });
@@ -418,19 +445,22 @@ app.post("/upload-supplier-excel", (req, res) => {
         headers.push(cell ? cell.v.toString().trim() : `EMPTY_${C}`);
       }
 
-      // Read data starting from row 7
       jsonData = XLSX.utils.sheet_to_json(sheet, {
         header: headers,
-        range: headerRowNumber, // start reading from row 7
-        defval: ""
+        range: headerRowNumber,
+        defval: "",
+        cellDates: true
       });
     } else {
-      jsonData = supplierData; // already JSON
+      jsonData = supplierData;
     }
 
-    // --- 2️⃣ Normalize headers ---
+    // ---------- 2️⃣ Normalize helpers ----------
     const normalizeKey = (key) =>
       key?.toString().trim().toUpperCase().replace(/\s+/g, "_") || "";
+
+    const normalize = (val) =>
+      val?.toString().trim().toUpperCase() || "";
 
     const supplierDataNormalized = jsonData.map(row => {
       const newRow = {};
@@ -440,129 +470,145 @@ app.post("/upload-supplier-excel", (req, res) => {
       return newRow;
     });
 
-    // --- 3️⃣ Save uploaded supplier Excel to supplier_excels ---
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const supplierFilename = `supplier_upload_${timestamp}.xlsx`;
-    const supplierSavePath = path.join(SUPPLIER_DIR, supplierFilename);
-
-    const supplierWorkbook = XLSX.utils.book_new();
-    const supplierSheet = XLSX.utils.json_to_sheet(supplierDataNormalized);
-    XLSX.utils.book_append_sheet(supplierWorkbook, supplierSheet, "Supplier Upload");
-    XLSX.writeFile(supplierWorkbook, supplierSavePath);
-
-    // --- 4️⃣ Update saved OCR files ---
+    // ---------- 3️⃣ Read saved_excels reference numbers ----------
     const savedFiles = fs.readdirSync(SAVE_DIR).filter(f => f.endsWith(".xlsx"));
-    if (savedFiles.length === 0) {
-      return res.status(400).json({ error: "No saved OCR files found to update" });
-    }
+    const savedReferences = new Set();
 
-    let totalUpdated = 0;
-    let totalAdded = 0;
-    const updatedFiles = new Set();
-    const newRows = []; 
+    savedFiles.forEach(file => {
+      const filePath = path.join(SAVE_DIR, file);
+      const wb = XLSX.readFile(filePath);
+      const sheetName = wb.SheetNames[0];
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
 
-    const masterFile = savedFiles[0]; // master OCR file
-    const masterPath = path.join(SAVE_DIR, masterFile);
-    const masterWorkbook = XLSX.readFile(masterPath);
-    const masterSheetName = masterWorkbook.SheetNames[0];
-    const masterRows = XLSX.utils.sheet_to_json(masterWorkbook.Sheets[masterSheetName], { defval: "" });
-
-    supplierDataNormalized.forEach(supplierRow => {
-      const supplierRef = normalize(supplierRow["CHEP_THAN_NUMBER"] || supplierRow["GLS_DOC._UMBER"]);
-
-      let found = false;
-
-      // Update all saved OCR files
-      savedFiles.forEach(file => {
-        const filePath = path.join(SAVE_DIR, file);
-        const wb = XLSX.readFile(filePath);
-        const sheetName = wb.SheetNames[0];
-        const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
-
-        const updatedRows = rows.map(row => {
-          if (normalize(row.reference_number) === supplierRef) {
-            found = true;
-            totalUpdated++;
-            updatedFiles.add(file);
-
-            return {
-              ...row,
-              Date: supplierRow["DATE"] || row.Date,
-              Supplier_Name: supplierRow["SUPPLIER_NAME"] || row.Supplier_Name,
-              PO_Number: supplierRow["PO_NUMBER"] || row.PO_Number,
-              Ref_1: supplierRow.Ref_1 || row.Ref_1,
-              Ref_2: supplierRow.Ref_2 || row.Ref_2,
-              quantity: supplierRow["CHEP_PALLET_QTY"] || supplierRow["GLS_PALLET_QTY"] || row.quantity
-            };
-          }
-          return row;
-        });
-
-        if (found) {
-          wb.Sheets[sheetName] = XLSX.utils.json_to_sheet(updatedRows);
-          XLSX.writeFile(wb, filePath);
+      rows.forEach(row => {
+        if (row.reference_number) {
+          savedReferences.add(normalize(row.reference_number));
         }
       });
-
-      // If not found → add to master file
-      if (!found) {
-        newRows.push({
-        Date: supplierRow["DATE"] || "",
-        reference_number: supplierRef,
-        Supplier_Name: supplierRow["SUPPLIER_NAME"] || "",
-        PO_Number: supplierRow["PO_NUMBER"] || "",
-        Ref_1: supplierRow.Ref_1 || "",
-        Ref_2: supplierRow.Ref_2 || "",
-        quantity: supplierRow["CHEP_PALLET_QTY"] ?? supplierRow["GLS_PALLET_QTY"] ?? 0
-       });
-
-       totalAdded++;
-      }
     });
 
-    let newFileName = null;
+    // ---------- 4️⃣ Build match / unmatched report ----------
 
-if (newRows.length > 0) {
-  const newWorkbook = XLSX.utils.book_new();
+    const excelDateToJS = (value) => {
+       if (!value) return "";
 
-  const newSheet = XLSX.utils.json_to_sheet(newRows, {
-    header: [
-      "Date",
-      "reference_number",
-      "Supplier_Name",
-      "PO_Number",
-      "Ref_1",
-      "Ref_2",
-      "quantity"
-    ]
-  });
+       // Already a JS Date
+       if (value instanceof Date) return value;
 
-  XLSX.utils.book_append_sheet(newWorkbook, newSheet, "OCR Structured");
+       // Excel serial number
+       if (typeof value === "number") {
+          return new Date(Math.round((value - 25569) * 86400 * 1000));
+       }
 
-  newFileName = `ocr_structured_${Date.now()}.xlsx`;
-  const newFilePath = path.join(SAVE_DIR, newFileName);
+       return value;
+};
 
-  XLSX.writeFile(newWorkbook, newFilePath);
-}
+    const matchResultRows = supplierDataNormalized.map(supplierRow => {
+      const ref = normalize(
+        supplierRow["CHEP_THAN_NUMBER"] ||
+        supplierRow["GLS_DOC._UMBER"]
+      );
 
+      return {
+        Date: excelDateToJS(supplierRow["DATE"] || ""),
+        reference_number: ref,
+        Supplier_Name: supplierRow["SUPPLIER_NAME"] || "",
+        PO_Number: supplierRow["PO_NUMBER"] || "",
+        Quantity: supplierRow["CHEP_PALLET_QTY"] ?? supplierRow["GLS_PALLET_QTY"] ?? 0,
+        Ref_1: "",
+        Ref_2: "",
+        Ref_3: "",
+        Ref_4: "",
+        Status: savedReferences.has(ref) ? "matched" : "unmatched"
+      };
+    });
 
-   res.json({
-  message: "Supplier Excel processed successfully",
-  uploaded_file: supplierFilename,
-  updated_rows: totalUpdated,
-  added_rows: totalAdded,
-  updated_files: Array.from(updatedFiles),
-  new_records_file: newFileName
-    ? `http://localhost:5000/saved_excels/${newFileName}`
-    : null
-  });
+    // ---------- 5️⃣ Create result spreadsheet ----------
+    const matchWorkbook = XLSX.utils.book_new();
+    const matchSheet = XLSX.utils.json_to_sheet(matchResultRows, {
+      header: [
+        "Date",
+        "reference_number",
+        "Supplier_Name",
+        "PO_Number",
+        "Quantity",
+        "Ref_1",
+        "Ref_2",
+        "Ref_3",
+        "Ref_4",
+        "Status"
+      ]
+    });
 
+    XLSX.utils.book_append_sheet(matchWorkbook, matchSheet, "Match Result");
+
+    const matchFileName = `supplier_match_result_${Date.now()}.xlsx`;
+    const matchFilePath = path.join(SAVE_DIR, matchFileName);
+
+    XLSX.writeFile(matchWorkbook, matchFilePath);
+
+    if (!fs.existsSync(matchFilePath)) {
+        throw new Error("Match result file was not created");
+    }
+
+    // ---------- 6️⃣ Response ----------
+    res.json({
+      message: "Supplier Excel processed successfully",
+      match_result_file: `http://localhost:5000/saved_excels/${matchFileName}`,
+      download_url: `http://localhost:5000/saved_excels/${matchFileName}`
+    });
 
   } catch (error) {
-    console.error("SUPPLIER MERGE ERROR:", error);
+    console.error("SUPPLIER MATCH ERROR:", error);
     res.status(500).json({ error: error.message });
   }
 });
+//DOWNLOADING FILENAME PATH
+app.get(/^\/check-file\/(.+)$/, async (req, res) => {
+  try {
+    const rawPath = decodeURIComponent(req.params[0]);
+    const filename = path.basename(rawPath);
+
+    const filePath = path.join(os.homedir(), "Downloads", filename);
+
+    await fs.promises.access(filePath, fs.constants.F_OK);
+
+    res.json({
+      success: true,
+      message: "File exists",
+    });
+  } catch {
+    res.status(404).json({
+      success: false,
+      message: "File not found",
+    });
+  }
+});
+
+
+/**
+ * Open / download a file
+ */
+app.get(/^\/open-file\/(.+)$/, async (req, res) => {
+  try {
+    const rawPath = decodeURIComponent(req.params[0]);
+    const filename = path.basename(rawPath);
+
+    const filePath = path.join(os.homedir(), "Downloads", filename);
+
+    await fs.promises.access(filePath, fs.constants.F_OK);
+
+    res.sendFile(filePath);
+  } catch {
+    res.status(404).send("File not found");
+  }
+});
+
+
+
+
+
+
 
 
 

@@ -78,6 +78,18 @@ export default function ImageUploader({ onUpload }) {
       onDrop: handleDrop,
     });
 
+  const clearAll = () => {
+    // revoke all preview URLs
+    files.forEach((file) => URL.revokeObjectURL(file.preview));
+
+    setFiles([]);
+    setProgress({});
+
+    // notify parent that nothing is uploaded anymore
+    onUpload([]);
+  };
+
+
   return (
     <div>
       {/* DROPZONE */}
@@ -103,6 +115,17 @@ export default function ImageUploader({ onUpload }) {
           <p>Drag & drop multiple images, or click to select</p>
         )}
       </div>
+      {/* CLEAR ALL BUTTON */}
+      {files.length > 0 && (
+         <div style={{ marginTop: "15px", textAlign: "right" }}>
+            <button
+              onClick={clearAll}
+              style={{ padding: "8px 16px", background: "#9e9e9e", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", }}
+            >
+              Clear All
+            </button>
+         </div>
+      )}
 
       {/* PREVIEW LIST */}
       {files.length > 0 && (

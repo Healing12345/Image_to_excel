@@ -25,16 +25,14 @@ const PdfToImageDownloader = () => {
     }
   };
 
-  // Convert PDF (local file or server URL) to images
+  // Convert PDF (local file or server URL) to images and upload to VPS
   const convertPDFToImages = async (pdfSource, fileName) => {
     let arrayBuffer;
 
     if (typeof pdfSource === "string") {
-      // Fetch PDF from server URL
       const res = await fetch(pdfSource);
       arrayBuffer = await res.arrayBuffer();
     } else {
-      // Local file
       arrayBuffer = await pdfSource.arrayBuffer();
     }
 
@@ -53,15 +51,27 @@ const PdfToImageDownloader = () => {
       await page.render({ canvasContext: ctx, viewport }).promise;
 
       const imgData = canvas.toDataURL("image/png");
-      allImages.push({ src: imgData, fileName: `${fileName}-page-${pageNum}.png` });
+      const pageFileName = `${fileName}-page-${pageNum}.png`;
+      allImages.push({ src: imgData, fileName: pageFileName });
 
-      // Trigger download
-      canvas.toBlob((blob) => {
+      // Download locally
+      canvas.toBlob(async (blob) => {
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
-        link.download = `${fileName}-page-${pageNum}.png`;
+        link.download = pageFileName;
         link.click();
         URL.revokeObjectURL(link.href);
+
+        // Upload to server
+        const formData = new FormData();
+        formData.append("image", new File([blob], pageFileName, { type: "image/png" }));
+
+        try {
+           const res = await axios.post("http://localhost:5000/upload-image", formData);
+           console.log("Uploaded image:", res.data.url);
+        } catch (err) {
+          console.error("Image upload failed:", err.response?.data || err);
+        }
       }, "image/png");
     }
 
@@ -72,10 +82,8 @@ const PdfToImageDownloader = () => {
     const files = Array.from(e.target.files);
     if (!files.length) return;
 
-    // Upload PDFs to server
     await uploadFiles(files);
 
-    // Convert to images locally
     for (const file of files) {
       await convertPDFToImages(file, file.name);
     }
